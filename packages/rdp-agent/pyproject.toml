@@ -1,0 +1,25 @@
+[project]
+name = "rdp-agent"
+version = "0.1.0"
+description = "Real-time RDP screen analysis agent"
+authors = [{name = "n8n", email = "engineering@n8n.io"}]
+requires-python = ">=3.10"
+dependencies = [
+    "mss>=9.0.1",
+    "Pillow>=10.3.0",
+    "imagehash>=4.3.1",
+    "websockets>=11.0.3",
+    "aiohttp>=3.9.3",
+    "pytesseract>=0.3.10",
+    "easyocr>=1.7.1",
+    "numpy>=1.26.4",
+    "opencv-python>=4.9.0",
+    "pyautogui>=0.9.54",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

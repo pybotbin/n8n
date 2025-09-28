@@ -1,0 +1,153 @@
+{
+	"name": "Real-Time RDP Screen Analysis",
+	"nodes": [
+		{
+			"parameters": {
+				"action": "listen",
+				"channel": "frames"
+			},
+			"id": "WebSocketIngest",
+			"name": "WS Ingest",
+			"type": "n8n-nodes-base.websocketTrigger",
+			"typeVersion": 1,
+			"position": [200, 300]
+		},
+		{
+			"parameters": {
+				"functionCode": "// Deduplicate frames using Redis\nconst redis = await getRedisClient();\nconst frame = items[0].json;\nconst cacheKey = `frame-hash:${frame.agent_id}:${frame.p_hash}`;\nconst exists = await redis.get(cacheKey);\nif (exists) {\n  return [];\n}\nawait redis.set(cacheKey, frame.frame_id, 'EX', 5);\nreturn items;"
+			},
+			"id": "Deduplicate",
+			"name": "Deduplicate & Throttle",
+			"type": "n8n-nodes-base.function",
+			"typeVersion": 1,
+			"position": [480, 300]
+		},
+		{
+			"parameters": {
+				"functionCode": "const frame = items[0].json;\nconst state = await redisGet(`state:${frame.agent_id}`) || {};\nconst systemPrompt = `You are an RDP analysis assistant. Respond with JSON matching the schema {\\\"intent\\\": \\\"classify|act|noop\\\", \\\"confidence\\\": number, \\\"action\\\": {\\\"type\\\": string, \\\"target\\\": string|null, \\\"value\\\": string|null}, \\\"state_delta\\\": object|null, \\\"reason\\\": string}`;`;\nitems[0].json = {\n  messages: [\n    { role: 'system', content: systemPrompt },\n    { role: 'user', content: JSON.stringify({\n        ocr_text: frame.ocr_text,\n        signals: frame.signals,\n        last_state: state,\n        metadata: frame.meta\n    }) }\n  ],\n  frame\n};\nreturn items;"
+			},
+			"id": "ContextBuilder",
+			"name": "Context Builder",
+			"type": "n8n-nodes-base.function",
+			"typeVersion": 1,
+			"position": [760, 300]
+		},
+		{
+			"parameters": {
+				"operation": "chat",
+				"model": "gpt-4.1-mini",
+				"messages": "={{$json[\"messages\"]}}",
+				"responseFormat": "json_object",
+				"temperature": 0.2,
+				"maxTokens": 500
+			},
+			"id": "OpenAIChat",
+			"name": "ChatGPT",
+			"type": "n8n-nodes-base.openAi",
+			"typeVersion": 2,
+			"position": [1040, 300]
+		},
+		{
+			"parameters": {
+				"functionCode": "const frame = items[0].json.frame;\nconst decision = JSON.parse(items[0].json.data[0].json.choices[0].message.content);\nawait redisSet(`state:${frame.agent_id}`, decision.state_delta || {}, 3600);\nreturn [{ json: { frame, decision } }];"
+			},
+			"id": "DecisionParser",
+			"name": "Decision Parser",
+			"type": "n8n-nodes-base.function",
+			"typeVersion": 1,
+			"position": [1320, 300]
+		},
+		{
+			"parameters": {
+				"action": "send",
+				"channel": "actions",
+				"payload": "={{$json}}"
+			},
+			"id": "WebSocketOut",
+			"name": "WS Out",
+			"type": "n8n-nodes-base.websocketSend",
+			"typeVersion": 1,
+			"position": [1600, 300]
+		},
+		{
+			"parameters": {
+				"collection": "rdp_decisions",
+				"fields": [
+					"frame.frame_id",
+					"frame.agent_id",
+					"decision.intent",
+					"decision.confidence",
+					"decision.action"
+				],
+				"values": "={{$json}}"
+			},
+			"id": "PostgresLog",
+			"name": "Store Decision",
+			"type": "n8n-nodes-base.postgres",
+			"typeVersion": 2,
+			"position": [1600, 520]
+		}
+	],
+	"connections": {
+		"WS Ingest": {
+			"main": [
+				[
+					{
+						"node": "Deduplicate & Throttle",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Deduplicate & Throttle": {
+			"main": [
+				[
+					{
+						"node": "Context Builder",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Context Builder": {
+			"main": [
+				[
+					{
+						"node": "ChatGPT",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"ChatGPT": {
+			"main": [
+				[
+					{
+						"node": "Decision Parser",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Decision Parser": {
+			"main": [
+				[
+					{
+						"node": "WS Out",
+						"type": "main",
+						"index": 0
+					},
+					{
+						"node": "Store Decision",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	}
+}
